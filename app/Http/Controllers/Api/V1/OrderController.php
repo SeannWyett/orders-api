@@ -17,12 +17,14 @@ class OrderController extends Controller
     public function store(StoreOrderRequest $request, PlaceOrderAction $action)
     {   
         $data = $request->validated();
-        
+        $user = $request->user('sanctum');
+
         if ($user = $request->user('sanctum')) {
             $data['customer_name'] = $user->name;
             $data['customer_email'] = strtolower($user->email);
         }
-        $order = $action->execute($data);
+
+        $order = $action->execute($data, $user?->id);
 
         return (new OrderResource($order))
             ->response()

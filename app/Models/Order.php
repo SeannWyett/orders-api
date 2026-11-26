@@ -34,7 +34,7 @@ class Order extends Model
     {
         return $user->isStaff()
             ? $query
-            : $query->where('customer_email', strtoLower($user->email));
+            : $query->where('user_id', $user->id);
     }
 
     public function items()

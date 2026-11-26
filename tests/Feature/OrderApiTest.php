@@ -43,7 +43,7 @@ class OrderApiTest extends TestCase
         return User::factory()->create(['role' => Role::STAFF]);
     }
 
-    private function orderFor(string $email): Order
+    private function orderFor(string $email, ?User $owner = null): Order
     {
         Queue::fake();
         $product = Product::factory()->create(['stock' => 50]);
@@ -52,7 +52,7 @@ class OrderApiTest extends TestCase
             'customer_name' => 'Someone',
             'customer_email' => $email,
             'items' => [['product_id' => $product->id, 'quantity' => 1]],
-        ]);
+        ], $owner?->id);
     }
 
     public function test_places_order_decrements_stock_and_dispatches_job(): void
@@ -121,10 +121,11 @@ class OrderApiTest extends TestCase
 
     public function test_cancel_restores_stock_and_rejects_non_pending(): void
     {   
-        Sanctum::actingAs($this->customer());
+        $customer = $this->customer();
+        Sanctum::actingAs($customer);
         Queue::fake();
         $product = Product::factory()->create(['stock' => 5]);
-        $order = app(PlaceOrderAction::class)->execute($this->payload($product->id, 2));
+        $order = app(PlaceOrderAction::class)->execute($this->payload($product->id, 2), $customer->id);
 
         $this->postJson("/api/v1/orders/{$order->order_number}/cancel")->assertOk();
         $this->assertSame(5, $product->fresh()->stock);
@@ -173,9 +174,11 @@ class OrderApiTest extends TestCase
 
     public function test_customer_sees_only_own_orders_and_gets_404_on_others(): void
     {
-        $mine = $this->orderFor('ana@example.com');
-        $theirs = $this->orderFor('bob@example.com');
-        Sanctum::actingAs($this->customer('ana@example.com'));
+        $ana = $this->customer('ana@example.com');
+        $bob = $this->customer('bob@example.com');
+        $mine = $this->orderFor('ana@example.com', $ana);
+        $theirs = $this->orderFor('bob@example.com', $bob);
+        Sanctum::actingAs($ana);
 
         $this->getJson('/api/v1/orders')
             ->assertOk()
@@ -195,18 +198,21 @@ class OrderApiTest extends TestCase
         $this->getJson('/api/v1/orders')->assertOk()->assertJsonCount(2, 'data');
     }
 
-    public function test_customer_who_registers_later_sees_earlier_guest_orders(): void
+    public function test_registration_claims_unowned_orders_with_matching_email(): void
     {
-        $guestOrder = $this->orderFor('late@example.com');
+        Queue::fake();
+        $guest = $this->orderFor('late@example.com');          // unowned
+        $other = $this->orderFor('someone@example.com');       // different email
 
         $token = $this->postJson('/api/v1/register', [
-            'name' => 'Late', 'email' => 'Late@Example.com',      // mixed case on purpose
+            'name' => 'Late', 'email' => 'Late@Example.com',
             'password' => 'secret123', 'password_confirmation' => 'secret123',
         ])->assertCreated()->json('token');
 
         $this->withToken($token)->getJson('/api/v1/orders')
             ->assertOk()
-            ->assertJsonPath('data.0.order_number', $guestOrder->order_number);
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.order_number', $guest->order_number);
     }
 
     public function test_unauthenticated_list_returns_401(): void
@@ -214,5 +220,55 @@ class OrderApiTest extends TestCase
         $this->getJson('/api/v1/orders')
             ->assertStatus(401)
             ->assertJsonStructure(['message', 'errors']);
+    }
+
+    public function test_logged_in_checkout_sets_user_id(): void
+    {
+        Queue::fake();
+        $user = $this->customer('real@example.com');
+        $product = Product::factory()->create(['stock' => 5]);
+        Sanctum::actingAs($user);
+
+        $this->postJson('/api/v1/orders', $this->payload($product->id))->assertCreated();
+
+        $this->assertDatabaseHas('orders', ['user_id' => $user->id]);
+    }
+
+    public function test_registration_does_not_claim_orders_owned_by_someone_else(): void
+    {
+        Queue::fake();
+        $owner = $this->customer('owner@example.com');
+        $order = $this->orderFor('shared@example.com', $owner);   // owned, email differs from the owner's
+
+        $this->postJson('/api/v1/register', [
+            'name' => 'New', 'email' => 'shared@example.com',
+            'password' => 'secret123', 'password_confirmation' => 'secret123',
+        ])->assertCreated();
+
+        $this->assertSame($owner->id, $order->fresh()->user_id);
+    }
+
+    public function test_stale_pending_orders_are_cancelled_and_stock_restored(): void
+    {
+        Queue::fake();
+        $product = Product::factory()->create(['stock' => 10]);
+
+        $stale   = app(PlaceOrderAction::class)->execute($this->payload($product->id, 2));
+        $fresh   = app(PlaceOrderAction::class)->execute($this->payload($product->id, 3));
+        $doneOld = app(PlaceOrderAction::class)->execute($this->payload($product->id, 1));
+
+        // stock is now 10 - 2 - 3 - 1 = 4
+        Order::whereKey($stale->id)->update(['created_at' => now()->subMinutes(31)]);
+        Order::whereKey($doneOld->id)->update([
+            'created_at' => now()->subMinutes(31),
+            'status' => OrderStatus::COMPLETED->value,
+        ]);
+
+        $this->artisan('orders:cancel-stale')->assertSuccessful();
+
+        $this->assertSame(OrderStatus::CANCELLED, $stale->fresh()->status);     // old + pending: cancelled
+        $this->assertSame(OrderStatus::PENDING, $fresh->fresh()->status);       // recent: untouched
+        $this->assertSame(OrderStatus::COMPLETED, $doneOld->fresh()->status);   // old but not pending: untouched
+        $this->assertSame(6, $product->fresh()->stock);                         // only the stale order's 2 returned
     }
 }

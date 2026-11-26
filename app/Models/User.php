@@ -37,4 +37,9 @@ class User extends Authenticatable
     {
         return $this->role === Role::STAFF;
     }
+
+    public function order()
+    {
+        return $this->hasMany(Order::class);
+    }
 }

@@ -16,9 +16,9 @@ class PlaceOrderAction
     /**
      * Create a new class instance.
      */
-    public function execute(array $data): Order
+    public function execute(array $data, ?int $userId = null): Order
     {
-        $order = DB::transaction(function() use ($data) {
+        $order = DB::transaction(function() use ($data, $userId) {
             $quantities = collect($data['items'])
                 ->groupBy('product_id')
                 ->map(fn ($rows) => (int) $rows->sum('quantity'));
@@ -37,6 +37,7 @@ class PlaceOrderAction
             }
 
             $order = Order::create([
+                'user_id' => $userId,
                 'order_number' => 'TEMP-' .Str::uuid(),
                 'customer_name' => $data['customer_name'],
                 'customer_email' => $data['customer_email'],

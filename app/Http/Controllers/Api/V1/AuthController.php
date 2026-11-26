@@ -9,18 +9,17 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use App\Actions\RegisterCustomerAction;
 
 class AuthController extends Controller
 {
-    public function register(RegisterRequest $request)
+    public function register(RegisterRequest $request, RegisterCustomerAction $action)
     {
-        $user = User::create($request->validated());
-
-        Mail::to($user->email)->send(new SendRegisterConfirmation($user));
+        [$user, $token] = $action->execute($request->validated());
 
         return response()->json([
             'user' => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email, 'role' => 'customer'],
-            'token' => $user->createToken('api')->plainTextToken,
+            'token' => $token
         ], 201);
     }
 
