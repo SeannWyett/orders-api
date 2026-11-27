@@ -35,6 +35,9 @@ MySQL 8
 ### Laravel Feature Tests
 * Run in your terminal: php artisan test 
 
+### Postman Collection
+ * Located at storage/postman/api_collection.json
+
 ### Curl Commands
 
 ### Fetch all products
