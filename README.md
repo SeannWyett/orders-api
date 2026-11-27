@@ -97,3 +97,4 @@ curl -s localhost:8000/api/v1/orders -H "Accept: application/json" -H "Authoriza
 2. Low-stock alert
 3. Scheduled cleanup
 4. Rate limiting
+5. Idempotent
