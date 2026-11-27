@@ -18,6 +18,18 @@ MySQL 8
     * php artisan serve
 5. In another Terminal run : php artisan queue:work
 
+### Accounts used for testing
+
+| email | Password | Role |
+| --- | --- | --- |
+| staff1@gmail.com | password | Staff |
+| staff2@gmail.com | password | Staff |
+| customer1@gmail.com | password | Customer |
+| customer2@gmail.com | password | Customer |
+| customer3@gmail.com | password | Customer |
+| seannwyett77@gmail.com | 12345678 | Customer |
+
+
 ## Tests
 
 ### Laravel Feature Tests
@@ -31,10 +43,10 @@ curl -s localhost:8000/api/v1/products
 ### Create a new order
 curl -s -X POST localhost:8000/api/v1/orders \
   -H "Content-Type: application/json" -H "Accept: application/json" \
-  -d '{"customer_name":"Ana","customer_email":"ana@example.com","items":[{"product_id":1,"quantity":2}]}'
+  -d '{"customer_name":"Ana","customer_email":"ted@example.com","items":[{"product_id":1,"quantity":2}]}'
 
 ### Filter existing orders
-curl -s "localhost:8000/api/v1/orders?status=completed&customer_email=ana@example.com" -H "Accept: application/json"
+curl -s "localhost:8000/api/v1/orders?status=completed&customer_email=ted@example.com" -H "Accept: application/json"
 
 ### View a single order
 curl -s localhost:8000/api/v1/orders/FC-20261125-0001 -H "Accept: application/json"
@@ -44,7 +56,7 @@ curl -s -X POST localhost:8000/api/v1/orders/FC-20261125-0001/cancel -H "Accept:
 
 ### register, copy the token
 curl -s -X POST localhost:8000/api/v1/register -H "Accept: application/json" -H "Content-Type: application/json" \
-  -d '{"name":"Ana","email":"ana@example.com","password":"secret123","password_confirmation":"secret123"}'
+  -d '{"name":"Ana","email":"ted@example.com","password":"secret123","password_confirmation":"secret123"}'
 
 ### no token -> 401
 curl -s localhost:8000/api/v1/orders -H "Accept: application/json"
@@ -59,7 +71,7 @@ curl -s localhost:8000/api/v1/orders -H "Accept: application/json" -H "Authoriza
 | GET | `/api/v1/products` | Retrieve a list of all users |
 | POST | `/api/v1/register` | Create a new user |
 | POST | `/api/v1/login` | Login as a user |
-| POST | `/api/v1/orders` | Create a new Order |
+| POST | `/api/v1/orders` | Create a new Order, Accepts Idempotent-Key|
 | POST | `/api/v1/logout` | Log out User |
 | GET | `/api/v1/orders` | Retrieve Orders |
 | GET | `/api/v1/orders{order}` | Retrieve a specific order |
@@ -76,4 +88,8 @@ curl -s localhost:8000/api/v1/orders -H "Accept: application/json" -H "Authoriza
  * Guest or Unauthenticated users can place orders but cannot list, view or cancel them
 
 
-
+## Bonus tasks accomplished
+1. Authentication
+2. Low-stock alert
+3. Scheduled cleanup
+4. Rate limiting

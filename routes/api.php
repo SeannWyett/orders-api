@@ -18,7 +18,7 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:5,1');
 
     Route::post('orders', [OrderController::class, 'store'])
-        ->middleware('throttle:10,1');
+        ->middleware('throttle:10,1', 'idempotent');
 
     Route::middleware('auth:sanctum')->group(function(){
         Route::post('logout', [AuthController::class, 'logout']);

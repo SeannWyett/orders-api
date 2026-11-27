@@ -23,7 +23,7 @@ class RegisterCustomerAction
             $user = User::create([
                 'name' => $data['name'],
                 'email' => $email,
-                'password' => $data['email']
+                'password' => $data['password']
             ]);
 
             Order::whereNull('user_id')

@@ -5,6 +5,7 @@ namespace App\Actions;
 use App\Enums\OrderStatus;
 use App\Exceptions\InsufficientStockException;
 use App\Jobs\ProcessOrder;
+use App\Jobs\SendLowStockAlert;
 use App\Models\Order;
 use App\Models\Product;
 use Illuminate\Support\Facades\DB;
@@ -17,8 +18,10 @@ class PlaceOrderAction
      * Create a new class instance.
      */
     public function execute(array $data, ?int $userId = null): Order
-    {
-        $order = DB::transaction(function() use ($data, $userId) {
+    {   
+        $lowStockIds = [];
+
+        $order = DB::transaction(function() use ($data, $userId, &$lowStockIds) {
             $quantities = collect($data['items'])
                 ->groupBy('product_id')
                 ->map(fn ($rows) => (int) $rows->sum('quantity'));
@@ -52,6 +55,11 @@ class PlaceOrderAction
                 $subtotal = bcmul($product->price, (string) $qty, 2);
 
                 $product->decrement('stock', $qty);
+
+                if ($product->stock < 5) {
+                    $lowStockIds[] = $product->id;
+                }
+
                 $order->items()->create([
                     'product_id' => $product->id,
                     'quantity' => $qty,
@@ -70,6 +78,10 @@ class PlaceOrderAction
         });
 
         ProcessOrder::dispatch($order->id);
+
+        foreach ($lowStockIds as $productId) {
+            SendLowStockAlert::dispatch($productId);
+        }
 
         return $order->load('items.product');
     }

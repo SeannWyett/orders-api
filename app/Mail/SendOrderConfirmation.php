@@ -11,7 +11,7 @@ use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 use App\Models\Order;
 
-class SendOrderConfirmation extends Mailable Implements ShouldQueue
+class SendOrderConfirmation extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
 

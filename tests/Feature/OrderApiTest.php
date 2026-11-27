@@ -18,6 +18,8 @@ use Laravel\Sanctum\Sanctum;
 use App\Models\User;
 use App\Enums\Role;
 use App\Models\Order;
+use App\Jobs\SendLowStockAlert;
+use App\Models\IdempotencyKey;
 
 
 class OrderApiTest extends TestCase
@@ -27,13 +29,13 @@ class OrderApiTest extends TestCase
     private function payload(int $productId, int $qty = 1): array
     {
         return [
-            'customer_name' => 'Ana',
-            'customer_email' => 'ana@example.com',
+            'customer_name' => 'ted',
+            'customer_email' => 'ted@example.com',
             'items' => [['product_id' => $productId, 'quantity' => $qty, 'price' => 0.01]], // ignored by server
         ];
     }
 
-    private function customer(string $email = 'ana@example.com'): User
+    private function customer(string $email = 'ted@example.com'): User
     {
         return User::factory()->create(['email' => $email]);
     }
@@ -63,7 +65,7 @@ class OrderApiTest extends TestCase
         $this->postJson('/api/v1/orders', $this->payload($product->id, 2))
             ->assertCreated()
             ->assertJsonPath('data.status', 'pending')
-            ->assertJsonPath('data.total', '20.00');   // client price ignored
+            ->assertJsonPath('data.total', '20.00');   
 
         $this->assertSame(3, $product->fresh()->stock);
         Queue::assertPushed(ProcessOrder::class);
@@ -167,16 +169,16 @@ class OrderApiTest extends TestCase
         $product = Product::factory()->create(['stock' => 5]);
         Sanctum::actingAs($user);
 
-        $this->postJson('/api/v1/orders', $this->payload($product->id))   // payload says ana@example.com
+        $this->postJson('/api/v1/orders', $this->payload($product->id))   
             ->assertCreated()
             ->assertJsonPath('data.customer_email', 'real@example.com');
     }
 
     public function test_customer_sees_only_own_orders_and_gets_404_on_others(): void
     {
-        $ana = $this->customer('ana@example.com');
+        $ana = $this->customer('ted@example.com');
         $bob = $this->customer('bob@example.com');
-        $mine = $this->orderFor('ana@example.com', $ana);
+        $mine = $this->orderFor('ted@example.com', $ana);
         $theirs = $this->orderFor('bob@example.com', $bob);
         Sanctum::actingAs($ana);
 
@@ -191,7 +193,7 @@ class OrderApiTest extends TestCase
 
     public function test_staff_see_all_orders(): void
     {
-        $this->orderFor('ana@example.com');
+        $this->orderFor('ted@example.com');
         $this->orderFor('bob@example.com');
         Sanctum::actingAs($this->staff());
 
@@ -270,5 +272,88 @@ class OrderApiTest extends TestCase
         $this->assertSame(OrderStatus::PENDING, $fresh->fresh()->status);       // recent: untouched
         $this->assertSame(OrderStatus::COMPLETED, $doneOld->fresh()->status);   // old but not pending: untouched
         $this->assertSame(6, $product->fresh()->stock);                         // only the stale order's 2 returned
+    }
+
+    public function test_order_dropping_stock_below_five_dispatches_alert(): void
+    {
+        Queue::fake();
+        $product = Product::factory()->create(['stock' => 6]);
+
+        app(PlaceOrderAction::class)->execute($this->payload($product->id, 2));   // 6 -> 4
+
+        Queue::assertPushed(SendLowStockAlert::class, fn ($job) => $job->productId === $product->id);
+    }
+
+    public function test_same_idempotency_key_creates_only_one_order(): void
+    {
+        Queue::fake();
+        $product = Product::factory()->create(['stock' => 10]);
+        $headers = ['Idempotency-Key' => 'abc-123'];
+
+        $first  = $this->postJson('/api/v1/orders', $this->payload($product->id, 2), $headers)->assertCreated();
+        $second = $this->postJson('/api/v1/orders', $this->payload($product->id, 2), $headers)
+            ->assertCreated()
+            ->assertHeader('Idempotent-Replayed', 'true');
+
+        $this->assertSame($first->json('data.order_number'), $second->json('data.order_number'));
+        $this->assertSame(1, Order::count());
+        $this->assertSame(8, $product->fresh()->stock);      // decremented once
+        Queue::assertPushed(ProcessOrder::class, 1);
+    }
+
+    public function test_same_key_with_different_body_is_rejected(): void
+    {
+        Queue::fake();
+        $product = Product::factory()->create(['stock' => 10]);
+        $headers = ['Idempotency-Key' => 'abc-123'];
+
+        $this->postJson('/api/v1/orders', $this->payload($product->id, 1), $headers)->assertCreated();
+        $this->postJson('/api/v1/orders', $this->payload($product->id, 5), $headers)
+            ->assertStatus(422)
+            ->assertJsonStructure(['message', 'errors']);
+
+        $this->assertSame(1, Order::count());
+    }
+
+    public function test_requests_without_a_key_are_not_deduplicated(): void
+    {
+        Queue::fake();
+        $product = Product::factory()->create(['stock' => 10]);
+
+        $this->postJson('/api/v1/orders', $this->payload($product->id))->assertCreated();
+        $this->postJson('/api/v1/orders', $this->payload($product->id))->assertCreated();
+
+        $this->assertSame(2, Order::count());
+    }
+
+    public function test_failed_checkout_is_not_cached_so_the_key_can_be_retried(): void
+    {
+        Queue::fake();
+        $product = Product::factory()->create(['stock' => 1]);
+        $headers = ['Idempotency-Key' => 'retry-me'];
+
+        $this->postJson('/api/v1/orders', $this->payload($product->id, 2), $headers)->assertStatus(422);
+        $this->assertDatabaseCount('idempotency_keys', 0);
+
+        $product->forceFill(['stock' => 5])->save();
+
+        $this->postJson('/api/v1/orders', $this->payload($product->id, 2), $headers)->assertCreated();
+    }
+
+    public function test_same_key_from_different_users_does_not_collide(): void
+    {
+        Queue::fake();
+        $product = Product::factory()->create(['stock' => 10]);
+        $headers = ['Idempotency-Key' => 'shared-key'];
+
+        Sanctum::actingAs($this->customer('ana@example.com'));
+        $this->postJson('/api/v1/orders', $this->payload($product->id), $headers)->assertCreated();
+
+        Sanctum::actingAs($this->customer('bob@example.com'));
+        $this->postJson('/api/v1/orders', $this->payload($product->id), $headers)
+            ->assertCreated()
+            ->assertHeaderMissing('Idempotent-Replayed');
+
+        $this->assertSame(2, Order::count());
     }
 }

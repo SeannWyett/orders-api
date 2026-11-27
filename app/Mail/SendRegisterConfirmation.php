@@ -11,7 +11,7 @@ use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 use App\Models\User;
 
-class SendRegisterConfirmation extends Mailable
+class SendRegisterConfirmation extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
 
