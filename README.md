@@ -1,7 +1,8 @@
 # Orders API for FreshCart
 
 ## Requirements
-PHP 8.2+
+PHP 8.3^
+Laravel Framework 13^
 Composer
 MySQL 8
 
